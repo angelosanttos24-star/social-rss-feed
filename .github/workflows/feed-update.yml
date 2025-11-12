@@ -1,0 +1,20 @@
+name: Update Social Feeds
+
+on:
+  schedule:
+    # Run every 30 minutes
+    - cron: '*/30 * * * *'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  update-feeds:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger feed update
+        run: |
+          curl -X POST \
+            -H "Content-Type: application/json" \
+            -H "X-Cron-Secret: ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.VERCEL_DEPLOYMENT_URL }}/api/cron/trigger"
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}

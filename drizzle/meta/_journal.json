@@ -1,5 +1,13 @@
 {
   "version": "7",
   "dialect": "mysql",
-  "entries": []
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1762990247573,
+      "tag": "0000_wealthy_hannibal_king",
+      "breakpoints": true
+    }
+  ]
 }
