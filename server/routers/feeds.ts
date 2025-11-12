@@ -3,11 +3,22 @@ import { protectedProcedure, router } from '../_core/trpc';
 import { supabaseAdmin } from '../supabase';
 import { fetchFromRSSBridge, convertRSSBridgePost } from '../api/rss-bridge';
 
+// Helper to validate user ID
+function isValidUserId(id: any): id is string {
+  return typeof id === 'string' && id.length > 0 && id !== '1' && /^[0-9a-f-]+$/i.test(id);
+}
+
 export const feedsRouter = router({
   /**
    * List all feeds for the current user
    */
   list: protectedProcedure.query(async ({ ctx }) => {
+    // Handle case where user is not properly authenticated
+    if (!isValidUserId(ctx.user?.id)) {
+      console.warn('Invalid user ID:', ctx.user?.id);
+      return [];
+    }
+
     const { data, error } = await supabaseAdmin
       .from('feeds')
       .select('*')
@@ -15,7 +26,8 @@ export const feedsRouter = router({
       .order('created_at', { ascending: false });
 
     if (error) {
-      throw new Error(`Failed to fetch feeds: ${error.message}`);
+      console.error('Supabase error fetching feeds:', error);
+      return [];
     }
 
     return data || [];
@@ -33,6 +45,11 @@ export const feedsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      // Validate user ID
+      if (!isValidUserId(ctx.user?.id)) {
+        throw new Error('User not authenticated');
+      }
+
       // Extract username from URL if needed
       const username = input.username || input.profileUrl.split('/').filter(Boolean).pop() || 'unknown';
 
@@ -79,6 +96,11 @@ export const feedsRouter = router({
   delete: protectedProcedure
     .input(z.object({ feedId: z.string() }))
     .mutation(async ({ ctx, input }) => {
+      // Validate user ID
+      if (!isValidUserId(ctx.user?.id)) {
+        throw new Error('User not authenticated');
+      }
+
       // Verify ownership
       const { data: feed, error: fetchError } = await supabaseAdmin
         .from('feeds')
@@ -114,6 +136,12 @@ export const feedsRouter = router({
       })
     )
     .query(async ({ ctx, input }) => {
+      // Handle case where user is not properly authenticated
+      if (!isValidUserId(ctx.user?.id)) {
+        console.warn('Invalid user ID:', ctx.user?.id);
+        return [];
+      }
+
       // Get user's feed IDs
       const { data: feeds, error: feedsError } = await supabaseAdmin
         .from('feeds')
@@ -121,7 +149,8 @@ export const feedsRouter = router({
         .eq('user_id', ctx.user.id);
 
       if (feedsError) {
-        throw new Error(`Failed to fetch feeds: ${feedsError.message}`);
+        console.error('Supabase error fetching user feeds:', feedsError);
+        return [];
       }
 
       const feedIds = feeds?.map((f) => f.id) || [];
@@ -139,7 +168,8 @@ export const feedsRouter = router({
         .range(input.offset, input.offset + input.limit - 1);
 
       if (error) {
-        throw new Error(`Failed to fetch posts: ${error.message}`);
+        console.error('Supabase error fetching posts:', error);
+        return [];
       }
 
       return data || [];

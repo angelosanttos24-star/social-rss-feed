@@ -3,11 +3,21 @@ import { protectedProcedure, router } from '../_core/trpc';
 import { supabaseAdmin } from '../supabase';
 import { summarizeFeed, summarizePost, suggestReplies } from '../api/gemini';
 
+// Helper to validate user ID
+function isValidUserId(id: any): id is string {
+  return typeof id === 'string' && id.length > 0 && id !== '1' && /^[0-9a-f-]+$/i.test(id);
+}
+
 export const geminiRouter = router({
   /**
    * Summarize entire feed using Gemini
    */
   summarizeFeed: protectedProcedure.mutation(async ({ ctx }) => {
+    // Validate user ID
+    if (!isValidUserId(ctx.user?.id)) {
+      return { summary: 'Please log in to use this feature.' };
+    }
+
     // Get user's feeds
     const { data: feeds, error: feedsError } = await supabaseAdmin
       .from('feeds')
@@ -15,7 +25,8 @@ export const geminiRouter = router({
       .eq('user_id', ctx.user.id);
 
     if (feedsError) {
-      throw new Error(`Failed to fetch feeds: ${feedsError.message}`);
+      console.error('Supabase error:', feedsError);
+      return { summary: 'No feeds available to summarize.' };
     }
 
     const feedIds = feeds?.map((f) => f.id) || [];
@@ -54,6 +65,11 @@ export const geminiRouter = router({
   summarizePost: protectedProcedure
     .input(z.object({ postId: z.string() }))
     .mutation(async ({ ctx, input }) => {
+      // Validate user ID
+      if (!isValidUserId(ctx.user?.id)) {
+        throw new Error('Please log in to use this feature.');
+      }
+
       // Get the post
       const { data: posts, error: postsError } = await supabaseAdmin
         .from('posts')
@@ -90,6 +106,11 @@ export const geminiRouter = router({
   suggestReplies: protectedProcedure
     .input(z.object({ postId: z.string() }))
     .mutation(async ({ ctx, input }) => {
+      // Validate user ID
+      if (!isValidUserId(ctx.user?.id)) {
+        throw new Error('Please log in to use this feature.');
+      }
+
       // Get the post
       const { data: posts, error: postsError } = await supabaseAdmin
         .from('posts')

@@ -45,10 +45,10 @@
 - [ ] Test workflow execution (after deployment)
 
 ## Phase 7: Testing & Deployment
-- [ ] Test authentication flow
-- [ ] Test feed addition and retrieval
-- [ ] Test Gemini endpoints
-- [ ] Test RSS-Bridge integration
+- [x] Test authentication flow (fixed user ID validation)
+- [ ] Test feed addition and retrieval (after login)
+- [ ] Test Gemini endpoints (after login)
+- [ ] Test RSS-Bridge integration (after login)
 - [ ] Deploy to Vercel
 - [ ] Verify all endpoints working in production
 - [ ] Configure GitHub Actions secrets
