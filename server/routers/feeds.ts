@@ -2,35 +2,37 @@ import { z } from 'zod';
 import { protectedProcedure, router } from '../_core/trpc';
 import { supabaseAdmin } from '../supabase';
 import { fetchFromRSSBridge, convertRSSBridgePost } from '../api/rss-bridge';
-
-// Helper to validate user ID
-function isValidUserId(id: any): id is string {
-  return typeof id === 'string' && id.length > 0 && id !== '1' && /^[0-9a-f-]+$/i.test(id);
-}
+import { getUserId, ensureUserInSupabase } from '../api/user-mapping';
+import { v4 as uuidv4 } from 'uuid';
 
 export const feedsRouter = router({
   /**
    * List all feeds for the current user
    */
   list: protectedProcedure.query(async ({ ctx }) => {
-    // Handle case where user is not properly authenticated
-    if (!isValidUserId(ctx.user?.id)) {
-      console.warn('Invalid user ID:', ctx.user?.id);
+    try {
+      if (!ctx.user?.id) {
+        return [];
+      }
+
+      const userId = getUserId(ctx.user.id);
+
+      const { data, error } = await supabaseAdmin
+        .from('feeds')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('Supabase error fetching feeds:', error);
+        return [];
+      }
+
+      return data || [];
+    } catch (error) {
+      console.error('Error in feeds.list:', error);
       return [];
     }
-
-    const { data, error } = await supabaseAdmin
-      .from('feeds')
-      .select('*')
-      .eq('user_id', ctx.user.id)
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      console.error('Supabase error fetching feeds:', error);
-      return [];
-    }
-
-    return data || [];
   }),
 
   /**
@@ -45,49 +47,67 @@ export const feedsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      // Validate user ID
-      if (!isValidUserId(ctx.user?.id)) {
-        throw new Error('User not authenticated');
-      }
-
-      // Extract username from URL if needed
-      const username = input.username || input.profileUrl.split('/').filter(Boolean).pop() || 'unknown';
-
-      // Insert feed into database
-      const { data, error } = await supabaseAdmin
-        .from('feeds')
-        .insert({
-          user_id: ctx.user.id,
-          platform: input.platform,
-          profile_url: input.profileUrl,
-          username: username,
-          avatar_url: null,
-        })
-        .select()
-        .single();
-
-      if (error) {
-        throw new Error(`Failed to add feed: ${error.message}`);
-      }
-
-      // Fetch initial posts from RSS-Bridge
       try {
-        const posts = await fetchFromRSSBridge(input.platform, username);
+        if (!ctx.user?.id) {
+          throw new Error('User not authenticated');
+        }
 
-        // Convert and insert posts
-        const postsToInsert = posts.slice(0, 10).map((post) =>
-          convertRSSBridgePost(post, input.platform, data.id)
+        // Ensure user exists in Supabase
+        const userId = await ensureUserInSupabase(
+          supabaseAdmin,
+          ctx.user.id,
+          ctx.user.openId || String(ctx.user.id),
+          ctx.user.email || undefined,
+          ctx.user.name || undefined
         );
 
-        if (postsToInsert.length > 0) {
-          await supabaseAdmin.from('posts').insert(postsToInsert);
-        }
-      } catch (error) {
-        console.warn(`Failed to fetch initial posts for ${input.platform}/${username}:`, error);
-        // Don't fail the feed creation if initial fetch fails
-      }
+        // Extract username from URL if needed
+        const username = input.username || input.profileUrl.split('/').filter(Boolean).pop() || 'unknown';
 
-      return data;
+        // Generate UUID for feed
+        const feedId = uuidv4();
+
+        // Insert feed into database
+        const { data, error } = await supabaseAdmin
+          .from('feeds')
+          .insert({
+            id: feedId,
+            user_id: userId,
+            platform: input.platform,
+            profile_url: input.profileUrl,
+            username: username,
+            avatar_url: null,
+          })
+          .select()
+          .single();
+
+        if (error) {
+          console.error('Supabase error adding feed:', error);
+          throw new Error(`Failed to add feed: ${error.message}`);
+        }
+
+        // Fetch initial posts from RSS-Bridge
+        try {
+          const posts = await fetchFromRSSBridge(input.platform, username);
+
+          // Convert and insert posts
+          const postsToInsert = posts.slice(0, 10).map((post) =>
+            convertRSSBridgePost(post, input.platform, feedId)
+          );
+
+          if (postsToInsert.length > 0) {
+            await supabaseAdmin.from('posts').insert(postsToInsert);
+          }
+        } catch (error) {
+          console.warn(`Failed to fetch initial posts for ${input.platform}/${username}:`, error);
+          // Don't fail the feed creation if initial fetch fails
+        }
+
+        return data;
+      } catch (error) {
+        console.error('Error in feeds.add:', error);
+        throw error;
+      }
     }),
 
   /**
@@ -96,33 +116,39 @@ export const feedsRouter = router({
   delete: protectedProcedure
     .input(z.object({ feedId: z.string() }))
     .mutation(async ({ ctx, input }) => {
-      // Validate user ID
-      if (!isValidUserId(ctx.user?.id)) {
-        throw new Error('User not authenticated');
+      try {
+        if (!ctx.user?.id) {
+          throw new Error('User not authenticated');
+        }
+
+        const userId = getUserId(ctx.user.id);
+
+        // Verify ownership
+        const { data: feed, error: fetchError } = await supabaseAdmin
+          .from('feeds')
+          .select('user_id')
+          .eq('id', input.feedId)
+          .single();
+
+        if (fetchError || feed?.user_id !== userId) {
+          throw new Error('Feed not found or unauthorized');
+        }
+
+        // Delete feed (posts will be deleted by cascade)
+        const { error } = await supabaseAdmin
+          .from('feeds')
+          .delete()
+          .eq('id', input.feedId);
+
+        if (error) {
+          throw new Error(`Failed to delete feed: ${error.message}`);
+        }
+
+        return { success: true };
+      } catch (error) {
+        console.error('Error in feeds.delete:', error);
+        throw error;
       }
-
-      // Verify ownership
-      const { data: feed, error: fetchError } = await supabaseAdmin
-        .from('feeds')
-        .select('user_id')
-        .eq('id', input.feedId)
-        .single();
-
-      if (fetchError || feed?.user_id !== ctx.user.id) {
-        throw new Error('Feed not found or unauthorized');
-      }
-
-      // Delete feed (posts will be deleted by cascade)
-      const { error } = await supabaseAdmin
-        .from('feeds')
-        .delete()
-        .eq('id', input.feedId);
-
-      if (error) {
-        throw new Error(`Failed to delete feed: ${error.message}`);
-      }
-
-      return { success: true };
     }),
 
   /**
@@ -136,42 +162,47 @@ export const feedsRouter = router({
       })
     )
     .query(async ({ ctx, input }) => {
-      // Handle case where user is not properly authenticated
-      if (!isValidUserId(ctx.user?.id)) {
-        console.warn('Invalid user ID:', ctx.user?.id);
+      try {
+        if (!ctx.user?.id) {
+          return [];
+        }
+
+        const userId = getUserId(ctx.user.id);
+
+        // Get user's feed IDs
+        const { data: feeds, error: feedsError } = await supabaseAdmin
+          .from('feeds')
+          .select('id')
+          .eq('user_id', userId);
+
+        if (feedsError) {
+          console.error('Supabase error fetching user feeds:', feedsError);
+          return [];
+        }
+
+        const feedIds = feeds?.map((f) => f.id) || [];
+
+        if (feedIds.length === 0) {
+          return [];
+        }
+
+        // Get posts from all feeds
+        const { data, error } = await supabaseAdmin
+          .from('posts')
+          .select('*')
+          .in('feed_id', feedIds)
+          .order('created_at', { ascending: false })
+          .range(input.offset, input.offset + input.limit - 1);
+
+        if (error) {
+          console.error('Supabase error fetching posts:', error);
+          return [];
+        }
+
+        return data || [];
+      } catch (error) {
+        console.error('Error in feeds.getPosts:', error);
         return [];
       }
-
-      // Get user's feed IDs
-      const { data: feeds, error: feedsError } = await supabaseAdmin
-        .from('feeds')
-        .select('id')
-        .eq('user_id', ctx.user.id);
-
-      if (feedsError) {
-        console.error('Supabase error fetching user feeds:', feedsError);
-        return [];
-      }
-
-      const feedIds = feeds?.map((f) => f.id) || [];
-
-      if (feedIds.length === 0) {
-        return [];
-      }
-
-      // Get posts from all feeds
-      const { data, error } = await supabaseAdmin
-        .from('posts')
-        .select('*')
-        .in('feed_id', feedIds)
-        .order('created_at', { ascending: false })
-        .range(input.offset, input.offset + input.limit - 1);
-
-      if (error) {
-        console.error('Supabase error fetching posts:', error);
-        return [];
-      }
-
-      return data || [];
     }),
 });

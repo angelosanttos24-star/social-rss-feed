@@ -1,0 +1,21 @@
+{
+  "query": "SELECT * FROM users LIMIT 5;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway02.us-east-1.prod.aws.tidbcloud.com --port 4000 --user SzLRAFmrJvZkxyu.root --database LixAXD5Cgjz5tzX5FSj8LL --execute SELECT * FROM users LIMIT 5;",
+  "rows": [
+    {
+      "id": "1",
+      "openId": "Yfs5rS95Xf6LKdyqz9P79k",
+      "name": "Angelo Santos",
+      "email": "angelosanttos24@gmail.com",
+      "loginMethod": "google",
+      "role": "admin",
+      "createdAt": "2025-11-12 23:53:05",
+      "updatedAt": "2025-11-13 00:07:43",
+      "lastSignedIn": "2025-11-13 00:07:43"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\topenId\tname\temail\tloginMethod\trole\tcreatedAt\tupdatedAt\tlastSignedIn\n1\tYfs5rS95Xf6LKdyqz9P79k\tAngelo Santos\tangelosanttos24@gmail.com\tgoogle\tadmin\t2025-11-12 23:53:05\t2025-11-13 00:07:43\t2025-11-13 00:07:43\n",
+  "stderr": "",
+  "execution_time_ms": 389
+}
