@@ -3,6 +3,8 @@ import type { Express, Request, Response } from "express";
 import * as db from "../db";
 import { getSessionCookieOptions } from "./cookies";
 import { sdk } from "./sdk";
+import { supabaseAdmin } from "../supabase";
+import { getUserId, ensureUserInSupabase } from "../api/user-mapping";
 
 function getQueryParam(req: Request, key: string): string | undefined {
   const value = req.query[key];
@@ -28,13 +30,36 @@ export function registerOAuthRoutes(app: Express) {
         return;
       }
 
-      await db.upsertUser({
-        openId: userInfo.openId,
-        name: userInfo.name || null,
-        email: userInfo.email ?? null,
-        loginMethod: userInfo.loginMethod ?? userInfo.platform ?? null,
-        lastSignedIn: new Date(),
-      });
+      // Ensure user exists in Supabase
+      try {
+        // Extract numeric ID from openId or use a hash
+        const userId = parseInt(userInfo.openId.substring(0, 10), 36) || Math.abs(userInfo.openId.length * 31);
+        await ensureUserInSupabase(
+          supabaseAdmin,
+          userId,
+          userInfo.openId,
+          userInfo.email || undefined,
+          userInfo.name || undefined
+        );
+        console.log("[OAuth] User created in Supabase:", { userId, openId: userInfo.openId });
+      } catch (supabaseError) {
+        console.error("[OAuth] Failed to create user in Supabase:", supabaseError);
+        // Don't fail the OAuth flow if Supabase creation fails
+      }
+
+      // Try to upsert to local database (optional)
+      try {
+        await db.upsertUser({
+          openId: userInfo.openId,
+          name: userInfo.name || null,
+          email: userInfo.email ?? null,
+          loginMethod: userInfo.loginMethod ?? userInfo.platform ?? null,
+          lastSignedIn: new Date(),
+        });
+      } catch (dbError) {
+        console.warn("[OAuth] Failed to upsert to local database:", dbError);
+        // Don't fail the OAuth flow if local database upsert fails
+      }
 
       const sessionToken = await sdk.createSessionToken(userInfo.openId, {
         name: userInfo.name || "",
@@ -47,7 +72,7 @@ export function registerOAuthRoutes(app: Express) {
       res.redirect(302, "/");
     } catch (error) {
       console.error("[OAuth] Callback failed", error);
-      res.status(500).json({ error: "OAuth callback failed" });
+      res.status(500).json({ error: "OAuth callback failed", details: String(error) });
     }
   });
 }
